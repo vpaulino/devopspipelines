@@ -1,0 +1,152 @@
+# ASP.NET Core
+# Build and test ASP.NET Core projects targeting .NET Core.
+# Add steps that run tests, create a NuGet package, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- master
+- develop
+- features/*
+- bugfixes/*
+
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Release'
+
+  
+stages:
+- stage: CI
+  pool:
+   vmImage: 'ubuntu-latest'
+  jobs:
+   - job: Build
+     steps:
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+          feedsToUse: 'config'
+          nugetConfigPath: 'NuGet.Config'
+      - task: UseDotNet@2 
+        displayName: 'dotnet build'
+        inputs:
+          version: '3.1.x'
+          packageType: sdk
+      - script: dotnet build --configuration $(buildConfiguration) --no-restore
+   - job: Test
+     dependsOn: 
+      - Build
+     condition: succeeded('Build')
+     steps:
+     - task: DotNetCoreCLI@2
+       displayName: 'dotnet restore'
+       inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+          feedsToUse: 'config'
+          nugetConfigPath: 'NuGet.Config'
+     - task: DotNetCoreCLI@2
+       displayName: 'dotnet test'
+       inputs:
+          command: 'test'
+          projects: '**/tests/*[Tt]ests/*.csproj'
+          arguments: '--configuration $(buildConfiguration) /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
+     - task: PublishCodeCoverageResults@1
+       displayName: 'publish coverage results'
+       inputs:
+          codeCoverageTool: 'cobertura'
+          summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.cobertura.xml'
+
+- stage: WindowsDelivery
+  pool:
+   vmImage: windows-latest
+  dependsOn:
+    - CI  
+  condition: and(succeeded(), or(eq(variables['build.sourceBranch'], 'refs/heads/develop'),eq(variables['build.sourceBranch'], 'refs/heads/master')))
+  variables:
+  - name: buildConfiguration
+    value: Release 
+  jobs:
+  - job: DeliveryToWindows
+    steps:   
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+          feedsToUse: 'config'
+          nugetConfigPath: 'NuGet.Config'
+      - task: UseDotNet@2 
+        displayName: 'dotnet build'
+        inputs:
+          version: '3.1.x'
+          packageType: sdk
+      - script: dotnet build --configuration $(buildConfiguration) --no-restore
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet test'
+        inputs:
+          command: 'test'
+          projects: '**/tests/*[Tt]ests/*.csproj'
+          arguments: '--configuration $(buildConfiguration)'    
+      - task: DotNetCoreCLI@2
+        displayName: "Publish"
+        inputs:
+          command: 'publish'
+          publishWebProjects: true
+          arguments: '-r win-x86 --configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory) --verbosity diagnostic'
+          zipAfterPublish: true
+      - task: PublishBuildArtifacts@1
+        displayName: "Upload Artifacts"
+        inputs:
+          pathtoPublish: '$(Build.ArtifactStagingDirectory)' 
+          artifactName: 'win-x86-aspnetcoreappservice'
+
+- stage: LinuxDelivery
+  pool:
+   vmImage: 'ubuntu-18.04'
+  dependsOn:
+    - CI  
+  condition: and(succeeded(), or(eq(variables['build.sourceBranch'], 'refs/heads/develop'),eq(variables['build.sourceBranch'], 'refs/heads/master')))
+  variables:
+  - name: buildConfiguration
+    value: Release 
+  jobs:
+  - job: DeliveryToLinux
+    steps:   
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+          feedsToUse: 'config'
+          nugetConfigPath: 'NuGet.Config'
+      - task: UseDotNet@2 
+        displayName: 'dotnet build'
+        inputs:
+          version: '3.1.x'
+          packageType: sdk
+      - script: dotnet build --configuration $(buildConfiguration) --no-restore
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet test'
+        inputs:
+          command: 'test'
+          projects: '**/tests/*[Tt]ests/*.csproj'
+          arguments: '--configuration $(buildConfiguration)'    
+      - task: DotNetCoreCLI@2
+        displayName: "Publish"
+        inputs:
+          command: 'publish'
+          publishWebProjects: true
+          arguments: '-r linux-x64  --configuration $(BuildConfiguration) --output $(Build.ArtifactStagingDirectory) --verbosity diagnostic'
+          zipAfterPublish: true
+      - task: PublishBuildArtifacts@1
+        displayName: "Upload Artifacts"
+        inputs:
+          pathtoPublish: '$(Build.ArtifactStagingDirectory)' 
+          artifactName: 'linux-64-aspnetcoreappservice' 
+
+
+  
