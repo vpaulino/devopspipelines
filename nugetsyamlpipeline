@@ -1,0 +1,100 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+- develop
+- features/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+
+variables:
+  solution: '**/*.sln'
+  buildPlatform: 'Any CPU'
+  buildConfiguration: 'Debug'
+  releaseConfiguration: 'Release'
+  MSBUILDSINGLELOADCONTEXT: 1
+
+
+stages:
+- stage: CI
+  jobs:
+   - job: Build
+     steps:
+      - task: GitVersion@5
+        inputs:
+          runtime: 'core'
+          preferBundledVersion: false
+          configFilePath: 'GitVersionConfig.yaml'
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+      - task: UseDotNet@2 
+        displayName: 'dotnet build'
+        inputs:
+          version: '3.1.x'
+          packageType: sdk
+      - script: dotnet build --configuration $(buildConfiguration) --no-restore
+   - job: Test
+     dependsOn: 
+      - Build
+     condition: succeeded('Build')
+     steps:
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet test'
+        inputs:
+          command: 'test'
+          projects: '**/tests/*[Tt]ests/*.csproj'
+          arguments: '--configuration $(buildConfiguration)  /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
+      - task: PublishCodeCoverageResults@1
+        displayName: 'publish coverage results'
+        inputs:
+          codeCoverageTool: 'cobertura'
+          summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.cobertura.xml'
+- stage: CD
+  dependsOn:
+    - CI  
+  condition: and(succeeded(), eq(variables['build.sourceBranch'], 'refs/heads/master'))
+  jobs:
+   - job: Build
+     steps:
+      - task: GitVersion@5
+        displayName: 'Generate SemVer Version'
+        inputs:
+          runtime: 'core'
+          preferBundledVersion: false
+          configFilePath: 'GitVersionConfig.yaml'
+      - bash: |
+          echo $(GitVersion.SemVer)
+      - task: DotNetCoreCLI@2
+        displayName: 'dotnet restore'
+        inputs:
+          command: 'restore'
+          projects: '**/*.csproj'
+      - task: UseDotNet@2 
+        displayName: 'dotnet build'
+        inputs:
+          version: '3.1.x'
+          packageType: sdk
+    
+      - task: DotNetCoreCLI@2
+        displayName: 'Pack Nugets'
+        inputs:
+         command: 'pack'
+         packagesToPack: 'src/**/*.csproj'
+         configuration: '$(releaseConfiguration)'
+         outputDir: '$(Build.ArtifactStagingDirectory)/nugets'
+         includesymbols: true
+         versioningScheme: 'byEnvVar'
+         versionEnvVar: 'GitVersion.SemVer'
+      - task: PublishBuildArtifacts@1
+        inputs:
+          PathtoPublish: '$(Build.ArtifactStagingDirectory)/nugets'
+          ArtifactName: 'nugets'
+          publishLocation: 'Container'
